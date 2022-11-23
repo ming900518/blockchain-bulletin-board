@@ -10,3 +10,13 @@ A bulletin board system built with Rust and NEAR smart contract.
 |----------|-----------|
 | 程式語言 | Rust      |
 | 區塊鏈   | NEAR      |
+
+### 功能
+- [x] BBS與文章的結構
+- [x] 新增文章
+- [x] 查詢文章
+- [ ] 更新文章與移除文章
+
+  > 智能合約並沒有「移除」的概念，利用文章結構中的status判斷前端是否顯示
+- [ ] 前端畫面
+- [ ] 權限管理
