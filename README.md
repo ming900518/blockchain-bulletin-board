@@ -18,5 +18,6 @@ A bulletin board system built with Rust and NEAR smart contract.
 - [ ] 更新文章與移除文章
 
   > 智能合約並沒有「移除」的概念，利用文章結構中的status判斷前端是否顯示
+- [ ] 留言與按讚
 - [ ] 前端畫面
 - [ ] 權限管理
