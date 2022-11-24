@@ -2,10 +2,11 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near_bindgen, AccountId};
+use std::collections::VecDeque;
 
 #[derive(Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(crate = "near_sdk::serde", tag = "type")]
-pub enum PostStatus {
+pub enum Status {
     // 開放，全部人皆可查看，原作者可修改
     Open,
     // 鎖定，全部人皆可查看，原作者不可修改
@@ -34,7 +35,9 @@ pub struct Post {
     // 作者
     creator_user_id: AccountId,
     // 文章狀態
-    status: PostStatus,
+    status: Status,
+    // 留言（利用VecDeque可以更有效率的實作留言置頂功能，詳情見https://doc.rust-lang.org/std/collections/struct.VecDeque.html）
+    comments: VecDeque<Comment>,
 }
 
 impl Default for Post {
@@ -46,7 +49,8 @@ impl Default for Post {
             tags: Vec::default(),
             users_who_liked: Vec::default(),
             creator_user_id: env::signer_account_id(),
-            status: PostStatus::Open,
+            status: Status::Open,
+            comments: VecDeque::default(),
         }
     }
 }
@@ -55,7 +59,7 @@ impl Post {
     fn not_found() -> Self {
         Post {
             id: u128::MAX,
-            status: PostStatus::NotFound,
+            status: Status::NotFound,
             ..Post::default()
         }
     }
@@ -63,8 +67,61 @@ impl Post {
     fn no_permission() -> Self {
         Post {
             id: u128::MAX,
-            status: PostStatus::NoPermission,
+            status: Status::NoPermission,
             ..Post::default()
+        }
+    }
+}
+
+#[derive(Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+// 留言
+pub struct Comment {
+    // 留言者
+    comment_creator_user_id: AccountId,
+    // 內容
+    content: String,
+    // 點讚用戶
+    users_who_liked: Vec<AccountId>,
+    // 留言狀態
+    status: Status,
+    // 子留言（利用VecDeque可以更有效率的實作留言置頂功能，詳情見https://doc.rust-lang.org/std/collections/struct.VecDeque.html）
+    sub_comment: VecDeque<SubComment>,
+}
+
+#[derive(Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+// 子留言
+pub struct SubComment {
+    // 留言者
+    comment_creator_user_id: AccountId,
+    // 內容
+    content: String,
+    // 點讚用戶
+    users_who_liked: Vec<AccountId>,
+    // 子留言狀態
+    status: Status,
+}
+
+impl Default for Comment {
+    fn default() -> Self {
+        Self {
+            comment_creator_user_id: env::signer_account_id(),
+            content: String::default(),
+            users_who_liked: Vec::default(),
+            status: Status::Open,
+            sub_comment: VecDeque::default(),
+        }
+    }
+}
+
+impl Default for SubComment {
+    fn default() -> Self {
+        Self {
+            comment_creator_user_id: env::signer_account_id(),
+            content: String::default(),
+            users_who_liked: Vec::default(),
+            status: Status::Open,
         }
     }
 }
@@ -98,9 +155,7 @@ impl BulletinBoard {
             title,
             content,
             tags: tags.clone(),
-            users_who_liked: Vec::<AccountId>::default(),
-            creator_user_id: env::signer_account_id(),
-            status: PostStatus::Open,
+            ..Post::default()
         };
 
         self.posts.insert(&new_post.id, &new_post);
@@ -186,7 +241,7 @@ impl BulletinBoard {
         title: String,
         content: String,
         tags: Vec<String>,
-        status: PostStatus,
+        status: Status,
     ) -> Post {
         match Self::get_post(&self.posts, &post_id) {
             None => Post::not_found(),
@@ -197,10 +252,10 @@ impl BulletinBoard {
                     &status,
                 ) {
                     // 如果是原作者，且文章處於開放狀態
-                    (true, PostStatus::Open, _) => {
+                    (true, Status::Open, _) => {
                         match status {
                             // 如果要把文章鎖定或移除，忽略其他參數，直接改狀態
-                            PostStatus::Locked | PostStatus::Removed => post.status = status,
+                            Status::Locked | Status::Removed => post.status = status,
                             // 其他情況則需要儲存參數中的內容
                             _ => {
                                 post.title = title;
@@ -212,7 +267,7 @@ impl BulletinBoard {
                         post
                     }
                     // 如果是原作者，且文章處於鎖定狀態，原作者想要刪除文章
-                    (true, PostStatus::Locked, PostStatus::Removed) => {
+                    (true, Status::Locked, Status::Removed) => {
                         post.status = status;
                         self.posts.insert(&id, &post);
                         post
@@ -223,12 +278,137 @@ impl BulletinBoard {
         }
     }
 
+    // 新增留言
+    pub fn add_comment(
+        &mut self,
+        post_id: u128,
+        comment_index: Option<u128>,
+        content: String,
+    ) -> Post {
+        match Self::get_post(&self.posts, &post_id) {
+            None => Post::not_found(),
+            Some((id, mut post)) => {
+                // 如果有指定comment_index，代表要新增的是子留言
+                match comment_index {
+                    None => {
+                        // 直接做一個新的留言塞進文章留言的最後面
+                        post.comments.push_back(Comment {
+                            content,
+                            ..Comment::default()
+                        });
+                    }
+                    Some(index) => {
+                        // 判斷留言是否存在
+                        match post.comments.get(index as usize) {
+                            // 不存在就不做任何處理
+                            None => (),
+                            // 存在
+                            Some(comment) => {
+                                // 複製一份原有留言
+                                let mut new_comment = comment.clone();
+                                // 把新的子留言塞到子留言的最後面
+                                new_comment.sub_comment.push_back(SubComment {
+                                    content,
+                                    ..SubComment::default()
+                                });
+                                // 刪除原有留言
+                                post.comments.remove(index as usize);
+                                // 把新的留言塞進文章留言的最後面
+                                post.comments.push_back(new_comment);
+                            }
+                        }
+                    }
+                };
+                self.posts.insert(&id, &post);
+                post
+            }
+        }
+    }
+
+    // 編輯留言
+    pub fn edit_comment(
+        &mut self,
+        post_id: u128,
+        comment_index: u128,
+        subcomment_index: Option<u128>,
+        content: String,
+        status: Status,
+    ) -> Post {
+        match Self::get_post(&self.posts, &post_id) {
+            None => Post::not_found(),
+            Some((id, mut post)) => {
+                // 把文章中的留言撈出來
+                match post.comments.get_mut(comment_index as usize) {
+                    // 沒有就忽略
+                    None => (),
+                    // 有留言
+                    Some(comment) => {
+                        // 判斷是否有指定subcomment_index
+                        match subcomment_index {
+                            // 沒指定，直接寫入原有留言
+                            None => {
+                                // 判斷是否為原作者&留言狀態
+                                match (
+                                    comment.comment_creator_user_id == env::signer_account_id(),
+                                    &comment.status,
+                                    &status,
+                                ) {
+                                    // 是原作者&留言開放
+                                    (true, Status::Open, _) => {
+                                        comment.content = content;
+                                        comment.status = status;
+                                    }
+                                    // 是原作者&留言鎖定，原作者要刪除
+                                    (true, Status::Locked, Status::Removed) => {
+                                        comment.status = status;
+                                    }
+                                    (_, _, _) => (),
+                                }
+                            }
+                            // 有指定
+                            Some(index) => {
+                                // 撈出子留言
+                                match comment.sub_comment.get_mut(index as usize) {
+                                    // 沒有就忽略
+                                    None => (),
+                                    // 有子留言
+                                    Some(subcomment) => {
+                                        // 判斷是否為原作者&留言狀態
+                                        match (
+                                            subcomment.comment_creator_user_id
+                                                == env::signer_account_id(),
+                                            &subcomment.status,
+                                            &status,
+                                        ) {
+                                            // 是原作者&留言開放
+                                            (true, Status::Open, _) => {
+                                                subcomment.content = content;
+                                                subcomment.status = status;
+                                            }
+                                            // 是原作者&留言鎖定，原作者要刪除
+                                            (true, Status::Locked, Status::Removed) => {
+                                                subcomment.status = status;
+                                            }
+                                            (_, _, _) => (),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                self.posts.insert(&id, &post);
+                post
+            }
+        }
+    }
+
     // 查詢所有沒有被移除的文章（內部用）
     fn get_not_removed_post_vec(posts: &UnorderedMap<u128, Post>) -> Vec<(u128, Post)> {
         posts
             .to_vec()
             .into_iter()
-            .filter(|(_, post)| post.status != PostStatus::Removed)
+            .filter(|(_, post)| post.status != Status::Removed)
             .collect::<Vec<(u128, Post)>>()
     }
 
@@ -237,6 +417,6 @@ impl BulletinBoard {
         posts
             .to_vec()
             .into_iter()
-            .find(|(id, post)| post.status != PostStatus::Removed && id == post_id)
+            .find(|(id, post)| post.status != Status::Removed && id == post_id)
     }
 }
