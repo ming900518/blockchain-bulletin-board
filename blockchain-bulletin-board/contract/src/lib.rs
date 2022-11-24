@@ -174,12 +174,12 @@ impl BulletinBoard {
 
     // 查詢所有文章
     pub fn get_all_post(&self) -> Vec<(u128, Post)> {
-        Self::get_not_removed_post_vec(&self.posts)
+        Self::get_post_vec(&self.posts)
     }
 
     // 透過文字查詢文章
     pub fn search_post(&self, q: String) -> Vec<(u128, Post)> {
-        Self::get_not_removed_post_vec(&self.posts)
+        Self::get_post_vec(&self.posts)
             .into_iter()
             .filter(|(_, post)| post.title.contains(&q) || post.content.contains(&q))
             .collect::<Vec<(u128, Post)>>()
@@ -187,7 +187,7 @@ impl BulletinBoard {
 
     // 透過標籤查詢文章
     pub fn search_post_by_tags(&self, tags: Vec<String>) -> Vec<(u128, Post)> {
-        Self::get_not_removed_post_vec(&self.posts)
+        Self::get_post_vec(&self.posts)
             .into_iter()
             .filter(|(_, post)| tags.iter().all(|tag| post.tags.contains(tag)))
             .collect::<Vec<(u128, Post)>>()
@@ -195,7 +195,7 @@ impl BulletinBoard {
 
     // 透過使用者ID查詢文章
     pub fn search_post_by_user_id(&self, creator_user_id: AccountId) -> Vec<(u128, Post)> {
-        Self::get_not_removed_post_vec(&self.posts)
+        Self::get_post_vec(&self.posts)
             .into_iter()
             .filter(|(_, post)| post.creator_user_id == creator_user_id)
             .collect::<Vec<(u128, Post)>>()
@@ -404,18 +404,13 @@ impl BulletinBoard {
     }
 
     // 查詢所有沒有被移除的文章（內部用）
-    fn get_not_removed_post_vec(posts: &UnorderedMap<u128, Post>) -> Vec<(u128, Post)> {
-        posts
-            .to_vec()
-            .into_iter()
-            .filter(|(_, post)| post.status != Status::Removed)
-            .collect::<Vec<(u128, Post)>>()
+    fn get_post_vec(posts: &UnorderedMap<u128, Post>) -> Vec<(u128, Post)> {
+        posts.to_vec()
     }
 
     // 查詢指定的文章（內部用）
     fn get_post(posts: &UnorderedMap<u128, Post>, post_id: &u128) -> Option<(u128, Post)> {
-        posts
-            .to_vec()
+        Self::get_post_vec(posts)
             .into_iter()
             .find(|(id, post)| post.status != Status::Removed && id == post_id)
     }
