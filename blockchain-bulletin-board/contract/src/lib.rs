@@ -3,7 +3,7 @@ use near_sdk::collections::UnorderedMap;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near_bindgen, AccountId};
 
-#[derive(Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(crate = "near_sdk::serde", tag = "type")]
 pub enum PostStatus {
     // 開放，全部人皆可查看，原作者可修改
@@ -11,7 +11,11 @@ pub enum PostStatus {
     // 鎖定，全部人皆可查看，原作者不可修改
     Locked,
     // 移除，不可查看不可修改
-    Removed
+    Removed,
+    // 不存在
+    NotFound,
+    // 無權限
+    NoPermission,
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
@@ -30,7 +34,39 @@ pub struct Post {
     // 作者
     creator_user_id: AccountId,
     // 文章狀態
-    status: PostStatus
+    status: PostStatus,
+}
+
+impl Default for Post {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            title: String::default(),
+            content: String::default(),
+            tags: Vec::default(),
+            users_who_liked: Vec::default(),
+            creator_user_id: env::signer_account_id(),
+            status: PostStatus::Open,
+        }
+    }
+}
+
+impl Post {
+    fn not_found() -> Self {
+        Post {
+            id: u128::MAX,
+            status: PostStatus::NotFound,
+            ..Post::default()
+        }
+    }
+
+    fn no_permission() -> Self {
+        Post {
+            id: u128::MAX,
+            status: PostStatus::NoPermission,
+            ..Post::default()
+        }
+    }
 }
 
 #[near_bindgen]
@@ -55,7 +91,6 @@ impl Default for BulletinBoard {
 
 #[near_bindgen]
 impl BulletinBoard {
-
     // 新增文章
     pub fn add_post(&mut self, title: String, content: String, tags: Vec<String>) -> Post {
         let new_post = Post {
@@ -75,7 +110,6 @@ impl BulletinBoard {
                 Some(mut posts_id_vec) => posts_id_vec.push(new_post.id),
                 None => {
                     self.tags.insert(new_tag, &vec![new_post.id]);
-                    ()
                 }
             });
 
@@ -112,11 +146,97 @@ impl BulletinBoard {
             .collect::<Vec<(u128, Post)>>()
     }
 
+    // 點讚
+    pub fn like_post(&mut self, post_id: u128) -> Post {
+        match Self::get_post(&self.posts, &post_id) {
+            None => Post::not_found(),
+            Some((id, mut post)) => {
+                post.users_who_liked.push(env::signer_account_id());
+                self.posts.insert(&id, &post);
+                post
+            }
+        }
+    }
+
+    // 取消點讚
+    pub fn dislike_post(&mut self, post_id: u128) -> Post {
+        match Self::get_post(&self.posts, &post_id) {
+            None => Post::not_found(),
+            Some((id, mut post)) => {
+                let users_who_liked = &mut post.users_who_liked;
+                match users_who_liked
+                    .iter_mut()
+                    .position(|user_id| user_id == &env::signer_account_id())
+                {
+                    None => Post::not_found(),
+                    Some(position) => {
+                        users_who_liked.remove(position);
+                        self.posts.insert(&id, &post);
+                        post
+                    }
+                }
+            }
+        }
+    }
+
+    // 編輯文章（只有原作者可以修改或移除文章）
+    pub fn edit_post(
+        &mut self,
+        post_id: u128,
+        title: String,
+        content: String,
+        tags: Vec<String>,
+        status: PostStatus,
+    ) -> Post {
+        match Self::get_post(&self.posts, &post_id) {
+            None => Post::not_found(),
+            Some((id, mut post)) => {
+                match (
+                    post.creator_user_id == env::signer_account_id(),
+                    &post.status,
+                    &status,
+                ) {
+                    // 如果是原作者，且文章處於開放狀態
+                    (true, PostStatus::Open, _) => {
+                        match status {
+                            // 如果要把文章鎖定或移除，忽略其他參數，直接改狀態
+                            PostStatus::Locked | PostStatus::Removed => post.status = status,
+                            // 其他情況則需要儲存參數中的內容
+                            _ => {
+                                post.title = title;
+                                post.content = content;
+                                post.tags = tags;
+                            }
+                        }
+                        self.posts.insert(&id, &post);
+                        post
+                    }
+                    // 如果是原作者，且文章處於鎖定狀態，原作者想要刪除文章
+                    (true, PostStatus::Locked, PostStatus::Removed) => {
+                        post.status = status;
+                        self.posts.insert(&id, &post);
+                        post
+                    }
+                    (_, _, _) => Post::no_permission(),
+                }
+            }
+        }
+    }
+
     // 查詢所有沒有被移除的文章（內部用）
     fn get_not_removed_post_vec(posts: &UnorderedMap<u128, Post>) -> Vec<(u128, Post)> {
-        posts.to_vec()
+        posts
+            .to_vec()
             .into_iter()
             .filter(|(_, post)| post.status != PostStatus::Removed)
             .collect::<Vec<(u128, Post)>>()
+    }
+
+    // 查詢指定的文章（內部用）
+    fn get_post(posts: &UnorderedMap<u128, Post>, post_id: &u128) -> Option<(u128, Post)> {
+        posts
+            .to_vec()
+            .into_iter()
+            .find(|(id, post)| post.status != PostStatus::Removed && id == post_id)
     }
 }
