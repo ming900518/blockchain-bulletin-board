@@ -330,7 +330,7 @@ impl BulletinBoard {
         &mut self,
         post_id: u128,
         comment_index: u128,
-        subcomment_index: Option<u128>,
+        sub_comment_index: Option<u128>,
         content: String,
         status: Status,
     ) -> Post {
@@ -343,8 +343,8 @@ impl BulletinBoard {
                     None => (),
                     // 有留言
                     Some(comment) => {
-                        // 判斷是否有指定subcomment_index
-                        match subcomment_index {
+                        // 判斷是否有指定sub_comment_index
+                        match sub_comment_index {
                             // 沒指定，直接寫入原有留言
                             None => {
                                 // 判斷是否為原作者&留言狀態
@@ -372,22 +372,22 @@ impl BulletinBoard {
                                     // 沒有就忽略
                                     None => (),
                                     // 有子留言
-                                    Some(subcomment) => {
+                                    Some(sub_comment) => {
                                         // 判斷是否為原作者&留言狀態
                                         match (
-                                            subcomment.comment_creator_user_id
+                                            sub_comment.comment_creator_user_id
                                                 == env::signer_account_id(),
-                                            &subcomment.status,
+                                            &sub_comment.status,
                                             &status,
                                         ) {
                                             // 是原作者&留言開放
                                             (true, Status::Open, _) => {
-                                                subcomment.content = content;
-                                                subcomment.status = status;
+                                                sub_comment.content = content;
+                                                sub_comment.status = status;
                                             }
                                             // 是原作者&留言鎖定，原作者要刪除
                                             (true, Status::Locked, Status::Removed) => {
-                                                subcomment.status = status;
+                                                sub_comment.status = status;
                                             }
                                             (_, _, _) => (),
                                         }
@@ -405,13 +405,37 @@ impl BulletinBoard {
 
     // 查詢所有沒有被移除的文章（內部用）
     fn get_post_vec(posts: &UnorderedMap<u128, Post>) -> Vec<(u128, Post)> {
-        posts.to_vec()
+        posts
+            .to_vec()
+            .into_iter()
+            // 把移除的文章過濾掉
+            .filter(|(_, post)| post.status != Status::Removed)
+            .map(|(id, mut post)| {
+                let filtered_comment = post
+                    .comments
+                    .into_iter()
+                    // 把移除的留言過濾掉
+                    .filter(|comments| comments.status != Status::Removed)
+                    .map(|mut comments| {
+                        comments.sub_comment = comments
+                            .sub_comment
+                            .into_iter()
+                            // 把移除的子留言過濾掉
+                            .filter(|sub_comment| sub_comment.status != Status::Removed)
+                            .collect::<VecDeque<SubComment>>();
+                        comments
+                    })
+                    .collect::<VecDeque<Comment>>();
+                post.comments = filtered_comment;
+                (id, post)
+            })
+            .collect::<Vec<(u128, Post)>>()
     }
 
     // 查詢指定的文章（內部用）
     fn get_post(posts: &UnorderedMap<u128, Post>, post_id: &u128) -> Option<(u128, Post)> {
         Self::get_post_vec(posts)
             .into_iter()
-            .find(|(id, post)| post.status != Status::Removed && id == post_id)
+            .find(|(id, _)| id == post_id)
     }
 }
