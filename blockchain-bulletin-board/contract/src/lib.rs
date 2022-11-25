@@ -214,7 +214,7 @@ impl BulletinBoard {
     }
 
     // 取消點讚
-    pub fn dislike_post(&mut self, post_id: u128) -> Post {
+    pub fn unlike_post(&mut self, post_id: u128) -> Post {
         match Self::get_post(&self.posts, &post_id) {
             None => Post::not_found(),
             Some((id, mut post)) => {
