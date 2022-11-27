@@ -1,6 +1,11 @@
 # blockchain-bulletin-board
 A bulletin board system built with Rust and NEAR smart contract.
 
+## 請改用 main branch 中存放的最新版本
+**此 branch 中的智能合約使用 enum 在原有結構中紀錄文章、留言跟子留言的狀態。**  
+**在開發留言功能時，遇到非常大的性能問題（如果需要判斷子留言的狀態，需要對文章結構進行多達三次的 iteration）**  
+**未來版本已改採 Type Enum 進行開發，本版本僅作為紀錄保留。**  
+
 ## 說明
 ### 目標
 利用Rust與智能合約，實作BBS（電子佈告欄系統）
