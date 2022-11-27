@@ -24,3 +24,5 @@ A bulletin board system built with Rust and NEAR smart contract.
 - [ ] 留言/子留言點讚/移除讚
 - [ ] 留言/子留言置頂
 - [ ] 前端畫面
+
+> 本專案僅透過 `serde` 提供的 `skip_serializing` （跳過序列化）實現移除功能，資料依然存在於鏈中。
