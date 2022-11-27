@@ -357,4 +357,244 @@ impl BulletinBoard {
             }
         }
     }
+
+    // 新增留言
+    pub fn add_comment(
+        &mut self,
+        post_id: u128,
+        comment_id: Option<u128>,
+        content: String,
+    ) -> WithStatus<Post> {
+        // 找出文章，並確認要新增的留言是否是子留言
+        match (self.posts.get(&post_id), comment_id) {
+            // 有找到文章，而且要新增子留言
+            (Some(Open(mut post)), Some(comment_id)) => {
+                // 把留言撈出來
+                match &post.comments[comment_id as usize] {
+                    // 留言是開放的
+                    Open(comment) => {
+                        // 複製一份留言
+                        let mut new_comment = comment.clone();
+                        // 把新的子留言推進去
+                        new_comment.sub_comments.push(Open(SubComment {
+                            content,
+                            ..SubComment::default()
+                        }));
+                        // 把舊的留言刪除
+                        post.comments.remove(comment_id as usize);
+                        // 把新的留言推到文章中
+                        post.comments.push(Open(new_comment));
+                        // 儲存更改後的文章
+                        self.posts.insert(&post_id, &Open(post.clone()));
+                        // 回傳文章
+                        Open(post)
+                    }
+                    // 留言不是開放的或沒找到
+                    _ => Empty,
+                }
+            }
+            // 有找到文章，但不是要新增子留言
+            (Some(Open(mut post)), None) => {
+                // 直接把新留言推到文章裡
+                post.comments.push(Open(Comment {
+                    content,
+                    ..Comment::default()
+                }));
+                // 儲存更改後的文章
+                self.posts.insert(&post_id, &Open(post.clone()));
+                // 回傳文章
+                Open(post)
+            }
+            // 找不到文章
+            _ => Empty,
+        }
+    }
+
+    // 編輯留言
+    pub fn edit_comment(
+        &mut self,
+        post_id: u128,
+        comment_id: u128,
+        sub_comment_id: Option<u128>,
+        content: String,
+        status: Option<String>,
+    ) -> WithStatus<Post> {
+        // 撈出文章，並確認是否修改子留言/狀態
+        // 文章鎖定後不能修改其下的留言，留言鎖定後不能修改其下的子留言
+        match (self.posts.get(&post_id), sub_comment_id, status) {
+            // 開放文章，留言內容
+            // 先檢查留言是否存在
+            (Some(Open(mut post)), None, None) => match &post.comments[comment_id as usize] {
+                // 留言存在，且是開放狀態
+                Open(comment) => {
+                    // 複製舊的留言
+                    let mut new_comment = comment.clone();
+                    // 替換新留言的內容
+                    new_comment.content = content;
+                    // 移除舊留言
+                    post.comments.remove(comment_id as usize);
+                    // 將新留言推進文章中
+                    post.comments.push(Open(new_comment));
+                    // 儲存文章
+                    self.posts.insert(&post_id, &Open(post.clone()));
+                    // 回傳
+                    Open(post)
+                }
+                // 找不到留言，回傳無
+                _ => Empty,
+            },
+            // 開放文章，子留言內容
+            (Some(Open(mut post)), Some(sub_comment_id), None) => {
+                // 先檢查留言是否存在
+                match &post.comments[comment_id as usize] {
+                    // 留言存在，且是開放狀態
+                    Open(comment) => {
+                        // 複製舊的留言
+                        let mut new_comment = comment.clone();
+                        // 如果子留言是開放狀態
+                        if let Open(sub_comment) =
+                            &new_comment.sub_comments[sub_comment_id as usize]
+                        {
+                            // 複製舊的子留言
+                            let mut new_sub_comment = sub_comment.clone();
+                            // 替換新子留言的內容
+                            new_sub_comment.content = content;
+                            // 移除舊子留言
+                            new_comment.sub_comments.remove(sub_comment_id as usize);
+                            // 將新子留言推進留言中
+                            new_comment.sub_comments.push(Open(new_sub_comment));
+                        }
+                        // 移除舊留言
+                        post.comments.remove(comment_id as usize);
+                        // 將新留言推進文章中
+                        post.comments.push(Open(new_comment));
+                        // 儲存文章
+                        self.posts.insert(&post_id, &Open(post.clone()));
+                        // 回傳
+                        Open(post)
+                    }
+                    // 找不到留言，回傳無
+                    _ => Empty,
+                }
+            }
+            // 開放文章，留言狀態
+            (Some(Open(mut post)), None, Some(status)) => {
+                // 先檢查留言是否存在
+                match &post.comments[comment_id as usize] {
+                    // 留言存在，且是開放狀態
+                    Open(comment) => {
+                        // 確認請求提供的留言狀態正常
+                        if Self::check_status_string(&status) {
+                            // 複製舊的留言
+                            let new_comment = comment.clone();
+                            // 移除舊留言
+                            post.comments.remove(comment_id as usize);
+                            // 將舊留言加入新的狀態一併推進文章中
+                            post.comments
+                                .push(WithStatus::new_with_status_string(new_comment, status));
+                            // 儲存文章
+                            self.posts.insert(&post_id, &Open(post.clone()));
+                            // 回傳
+                            Open(post)
+                        } else {
+                            // 留言狀態不正常，回傳無
+                            Empty
+                        }
+                    }
+                    // 留言存在，且是鎖定狀態（僅能移除）
+                    Locked(comment) => {
+                        // 確認請求提供的留言狀態正常，且要求的狀態是移除
+                        if Self::check_status_string(&status) && status == "Removed" {
+                            // 複製舊的留言
+                            let new_comment = comment.clone();
+                            // 移除舊留言
+                            post.comments.remove(comment_id as usize);
+                            // 將舊留言加入新的狀態一併推進文章中
+                            post.comments
+                                .push(WithStatus::new_with_status_string(new_comment, status));
+                            // 儲存文章
+                            self.posts.insert(&post_id, &Open(post.clone()));
+                            // 回傳
+                            Open(post)
+                        } else {
+                            // 留言狀態不正常，回傳無
+                            Empty
+                        }
+                    }
+                    // 留言不存在，回傳無
+                    _ => Empty,
+                }
+            }
+            // 開放文章，子留言狀態
+            (Some(Open(mut post)), Some(sub_comment_id), Some(status)) => {
+                // 先檢查留言是否存在
+                match &post.comments[comment_id as usize] {
+                    // 留言存在，且是開放狀態
+                    Open(comment) => {
+                        // 複製舊的留言
+                        let mut new_comment = comment.clone();
+                        // 檢查子留言是否存在
+                        match &new_comment.sub_comments[sub_comment_id as usize] {
+                            // 子留言存在，且是開放狀態
+                            Open(sub_comment) => {
+                                // 確認請求提供的留言狀態正常
+                                if Self::check_status_string(&status) {
+                                    // 複製舊的子留言
+                                    let new_sub_comment = sub_comment.clone();
+                                    // 移除舊的子留言
+                                    new_comment.sub_comments.remove(sub_comment_id as usize);
+                                    // 將舊子留言加入新的狀態一併推進留言中
+                                    new_comment.sub_comments.push(
+                                        WithStatus::new_with_status_string(new_sub_comment, status),
+                                    );
+                                    // 移除舊的留言
+                                    post.comments.remove(comment_id as usize);
+                                    // 將新留言推進文章中
+                                    post.comments.push(Open(new_comment));
+                                    // 儲存文章
+                                    self.posts.insert(&post_id, &Open(post.clone()));
+                                    // 回傳
+                                    Open(post)
+                                } else {
+                                    // 留言狀態不正常，回傳無
+                                    Empty
+                                }
+                            }
+                            // 子留言存在，且是鎖定狀態（僅能移除）
+                            Locked(sub_comment) => {
+                                // 確認請求提供的留言狀態正常，且要求的狀態是移除
+                                if Self::check_status_string(&status) && status == "Removed" {
+                                    // 複製舊的子留言
+                                    let new_sub_comment = sub_comment.clone();
+                                    // 移除舊的子留言
+                                    new_comment.sub_comments.remove(sub_comment_id as usize);
+                                    // 將舊子留言加入新的狀態一併推進留言中
+                                    new_comment.sub_comments.push(
+                                        WithStatus::new_with_status_string(new_sub_comment, status),
+                                    );
+                                    // 移除舊的留言
+                                    post.comments.remove(comment_id as usize);
+                                    // 將新留言推進文章中
+                                    post.comments.push(Open(new_comment));
+                                    // 儲存文章
+                                    self.posts.insert(&post_id, &Open(post.clone()));
+                                    // 回傳
+                                    Open(post)
+                                } else {
+                                    // 留言狀態不正常，回傳無
+                                    Empty
+                                }
+                            }
+                            // 子留言不存在，回傳無
+                            _ => Empty,
+                        }
+                    }
+                    // 留言不存在，回傳無
+                    _ => Empty,
+                }
+            }
+            // 不符合以上條件，一律回傳無
+            (_, _, _) => Empty,
+        }
+    }
 }
