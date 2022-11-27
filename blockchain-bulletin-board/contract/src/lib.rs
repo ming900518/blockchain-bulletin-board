@@ -2,7 +2,6 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near_bindgen, AccountId};
-use std::collections::VecDeque;
 
 #[derive(Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(crate = "near_sdk::serde", tag = "type")]
@@ -36,8 +35,8 @@ pub struct Post {
     creator_user_id: AccountId,
     // 文章狀態
     status: Status,
-    // 留言（利用VecDeque可以更有效率的實作留言置頂功能，詳情見https://doc.rust-lang.org/std/collections/struct.VecDeque.html）
-    comments: VecDeque<Comment>,
+    // 留言
+    comments: Vec<Comment>,
 }
 
 impl Default for Post {
@@ -50,7 +49,7 @@ impl Default for Post {
             users_who_liked: Vec::default(),
             creator_user_id: env::signer_account_id(),
             status: Status::Open,
-            comments: VecDeque::default(),
+            comments: Vec::default(),
         }
     }
 }
@@ -85,8 +84,8 @@ pub struct Comment {
     users_who_liked: Vec<AccountId>,
     // 留言狀態
     status: Status,
-    // 子留言（利用VecDeque可以更有效率的實作留言置頂功能，詳情見https://doc.rust-lang.org/std/collections/struct.VecDeque.html）
-    sub_comment: VecDeque<SubComment>,
+    // 子留言（利用Vec可以更有效率的實作留言置頂功能，詳情見https://doc.rust-lang.org/std/collections/struct.Vec.html）
+    sub_comment: Vec<SubComment>,
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
@@ -110,7 +109,7 @@ impl Default for Comment {
             content: String::default(),
             users_who_liked: Vec::default(),
             status: Status::Open,
-            sub_comment: VecDeque::default(),
+            sub_comment: Vec::default(),
         }
     }
 }
@@ -292,7 +291,7 @@ impl BulletinBoard {
                 match comment_index {
                     None => {
                         // 直接做一個新的留言塞進文章留言的最後面
-                        post.comments.push_back(Comment {
+                        post.comments.push(Comment {
                             content,
                             ..Comment::default()
                         });
@@ -307,14 +306,14 @@ impl BulletinBoard {
                                 // 複製一份原有留言
                                 let mut new_comment = comment.clone();
                                 // 把新的子留言塞到子留言的最後面
-                                new_comment.sub_comment.push_back(SubComment {
+                                new_comment.sub_comment.push(SubComment {
                                     content,
                                     ..SubComment::default()
                                 });
                                 // 刪除原有留言
                                 post.comments.remove(index as usize);
                                 // 把新的留言塞進文章留言的最後面
-                                post.comments.push_back(new_comment);
+                                post.comments.push(new_comment);
                             }
                         }
                     }
@@ -422,10 +421,10 @@ impl BulletinBoard {
                             .into_iter()
                             // 把移除的子留言過濾掉
                             .filter(|sub_comment| sub_comment.status != Status::Removed)
-                            .collect::<VecDeque<SubComment>>();
+                            .collect::<Vec<SubComment>>();
                         comments
                     })
-                    .collect::<VecDeque<Comment>>();
+                    .collect::<Vec<Comment>>();
                 post.comments = filtered_comment;
                 (id, post)
             })
